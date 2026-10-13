@@ -6,15 +6,14 @@
   <meta name="description" content="Compara, agrupa y consolida listados sin sacar tus datos del navegador.">
   <meta name="theme-color" content="#05152d">
   <title>CompClick · Comparación inteligente</title>
-  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/compclick-logo.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Navegación principal">
       <a class="brand" href="#inicio" aria-label="CompClick, inicio">
-        <img src="logo.svg" alt="">
-        <span>Comp<span class="brand-color">Click</span></span>
+        <span class="logo-composite" aria-hidden="true"><span class="logo-crop logo-mark"><img src="assets/compclick-logo.png" alt=""></span><span class="brand-text">Comp<span class="brand-color">Click</span></span></span>
       </a>
       <nav class="sidebar-nav">
         <button class="nav-item active" type="button" data-scroll="inicio" aria-current="page"><svg aria-hidden="true"><use href="#i-home"></use></svg><span>Inicio</span></button>
@@ -23,14 +22,14 @@
         <button class="nav-item" type="button" data-scroll="comparacion"><svg aria-hidden="true"><use href="#i-settings"></use></svg><span>Configuración</span></button>
       </nav>
       <div class="sidebar-card">
-        <img src="logo.svg" alt="">
+        <span class="logo-crop logo-mark small"><img src="assets/compclick-logo.png" alt=""></span>
         <div><strong>CompClick</strong><p>Compara, unifica y simplifica tus datos.</p></div>
       </div>
     </aside>
 
     <div class="app-main">
       <header class="topbar">
-        <div class="mobile-brand"><img src="logo.svg" alt=""><strong>Comp<span class="brand-color">Click</span></strong></div>
+        <div class="mobile-brand"><span class="logo-composite" aria-hidden="true"><span class="logo-crop logo-mark"><img src="assets/compclick-logo.png" alt=""></span><span class="brand-text">Comp<span class="brand-color">Click</span></span></span></div>
         <div class="privacy-pill"><span class="privacy-dot"></span> Procesamiento local y privado</div>
         <div class="top-actions">
           <button class="icon-button" id="themeToggle" type="button" aria-label="Cambiar tema" title="Cambiar tema"><svg aria-hidden="true"><use href="#i-sun"></use></svg></button>
@@ -61,10 +60,10 @@
             <section class="card mapping-card" id="mapeo">
               <div class="card-heading heading-row">
                 <div class="heading-group"><span class="mini-step amber">2</span><div><h2>Mapeo inteligente</h2><p>CompClick sugiere coincidencias entre columnas.</p></div></div>
-                <span class="auto-badge"><svg aria-hidden="true"><use href="#i-spark"></use></svg> Detección automática</span>
+                <button class="auto-badge" id="autoMapAll" type="button"><svg aria-hidden="true"><use href="#i-spark"></use></svg> Detección automática</button>
               </div>
               <div class="mapping-wrap"><div class="mapping-table empty-mapping" id="mappingTable"></div></div>
-              <div class="mapping-footer"><label><input type="checkbox" checked disabled> Usar primera fila como encabezados</label><span><svg aria-hidden="true"><use href="#i-eye"></use></svg> Vista previa de datos</span></div>
+              <div class="mapping-footer"><label><input type="checkbox" checked disabled> Usar primera fila como encabezados</label><button id="previewData" type="button" disabled><svg aria-hidden="true"><use href="#i-eye"></use></svg> Vista previa de datos</button></div>
             </section>
 
             <section class="card compare-card" id="comparacion">
@@ -81,7 +80,7 @@
             <section class="card results-card">
               <div class="card-heading heading-row results-heading">
                 <div class="heading-group"><span class="mini-step green">4</span><div><h2>Resultados de comparación</h2><p id="resultsSummary">Carga archivos para comenzar el análisis.</p></div></div>
-                <div class="result-tools"><label class="search-box"><svg aria-hidden="true"><use href="#i-search"></use></svg><input id="search" type="search" placeholder="Buscar por nombre, email o ID..." disabled></label><button class="filter-button" id="filterButton" type="button" disabled><svg aria-hidden="true"><use href="#i-filter"></use></svg> Filtros</button></div>
+                <div class="result-tools"><label class="search-box"><svg aria-hidden="true"><use href="#i-search"></use></svg><input id="search" type="search" placeholder="Buscar por nombre, email o ID..." disabled></label><button class="filter-button" id="filterButton" type="button" disabled aria-expanded="false"><svg aria-hidden="true"><use href="#i-filter"></use></svg> Filtros</button><div class="filter-popover" id="filterPopover" hidden><label>Fuente<select id="sourceFilter"><option value="">Todos los archivos</option></select></label><button id="clearFilters" type="button">Limpiar filtros</button></div></div>
               </div>
               <div class="status-tabs" id="statusTabs">
                 <button class="status-tab active" type="button" data-filter="all">Todos <span id="countAll">0</span></button>
@@ -96,7 +95,7 @@
 
             <section class="card detail-card" id="exportar">
               <div class="detail-heading"><div><span class="detail-icon"><svg aria-hidden="true"><use href="#i-users"></use></svg></span><strong>Detalle de registro y agrupación</strong></div><span class="group-number" id="groupNumber">Sin selección</span></div>
-              <div class="detail-tabs"><button class="active" type="button">Vista agrupada</button><button type="button">Datos individuales</button><button type="button">Historial</button></div>
+              <div class="detail-tabs"><button class="active" type="button" data-detail-view="grouped">Vista agrupada</button><button type="button" data-detail-view="individual">Datos individuales</button><button type="button" data-detail-view="history">Historial</button></div>
               <div class="detail-content" id="detailContent"><div class="detail-empty"><svg aria-hidden="true"><use href="#i-users"></use></svg><strong>Selecciona un resultado</strong><p>Aquí verás los registros de cada fuente y podrás revisar sus diferencias.</p></div></div>
               <div class="export-bar"><button id="exportCsv" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg> CSV</button><button class="primary-export" id="exportXlsx" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg> Exportar Excel</button></div>
             </section>
@@ -105,6 +104,11 @@
       </main>
     </div>
   </div>
+
+  <dialog class="preview-dialog" id="previewDialog">
+    <div class="preview-dialog-head"><div><strong>Vista previa de datos</strong><small id="previewCaption"></small></div><button id="closePreview" type="button" aria-label="Cerrar vista previa">×</button></div>
+    <div class="preview-table-wrap"><table class="preview-table"><thead id="previewHead"></thead><tbody id="previewBody"></tbody></table></div>
+  </dialog>
 
   <svg class="svg-defs" aria-hidden="true">
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></symbol>

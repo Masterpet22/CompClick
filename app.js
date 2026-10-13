@@ -15,9 +15,12 @@ const state = {
   records: [],
   groups: [],
   filter: 'all',
+  sourceFilter: '',
   search: '',
   page: 0,
-  selected: null
+  selected: null,
+  detailView: 'grouped',
+  lastRun: null
 };
 
 const fieldByKey = (key) => STANDARD_FIELDS.find((field) => field.key === key);
@@ -141,6 +144,7 @@ async function addFiles(files) {
   renderFiles();
   renderMapping();
   renderCompareControls();
+  renderSourceFilter();
   updateProgress();
   $('loadStatus').textContent = errors.length ? errors.join(' · ') : `${state.datasets.length} ${state.datasets.length === 1 ? 'archivo cargado' : 'archivos cargados'} correctamente.`;
   $('files').value = '';
@@ -149,8 +153,12 @@ async function addFiles(files) {
 function renderFiles() {
   if (!state.datasets.length) {
     $('fileList').innerHTML = '<div class="empty-files"><span>Aún no hay archivos</span><small>Agrega al menos dos para comenzar</small></div>';
+    $('previewData').disabled = true;
+    $('autoMapAll').disabled = true;
     return;
   }
+  $('previewData').disabled = false;
+  $('autoMapAll').disabled = false;
   $('fileList').innerHTML = state.datasets.map((dataset) => {
     const type = ['xlsx', 'xls'].includes(dataset.extension) ? 'XLS' : dataset.extension.toUpperCase();
     const iconClass = dataset.extension === 'pdf' ? 'pdf' : ['csv', 'tsv'].includes(dataset.extension) ? 'csv' : dataset.extension === 'txt' ? 'txt' : '';
@@ -159,7 +167,7 @@ function renderFiles() {
   $('fileList').querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', () => {
     state.datasets = state.datasets.filter((dataset) => dataset.id !== button.dataset.remove);
     state.groups = []; state.records = []; state.selected = null;
-    renderFiles(); renderMapping(); renderCompareControls(); renderResults(); updateProgress();
+    renderFiles(); renderMapping(); renderCompareControls(); renderSourceFilter(); renderResults(); updateProgress();
   }));
 }
 
@@ -181,15 +189,29 @@ function renderCompareControls() {
   const currentPrimary = $('primaryKey').value || 'id';
   $('primaryKey').innerHTML = STANDARD_FIELDS.map((field) => `<option value="${field.key}" ${currentPrimary === field.key ? 'selected' : ''}>${field.label}</option>`).join('');
   $('compareFields').innerHTML = STANDARD_FIELDS.filter((field) => field.key !== 'id').map((field) => {
-    const mode = field.key === 'phone' || field.key === 'address' ? 'Coincidencia flexible' : field.key === 'date' ? 'Diferencia en días' : 'Coincidencia exacta';
-    return `<label class="compare-field"><input type="checkbox" data-compare="${field.key}" checked><span>${field.label}</span><select class="compare-mode" aria-label="Modo de ${field.label}"><option>${mode}</option><option>Ignorar diferencias</option></select></label>`;
+    const mode = field.key === 'phone' || field.key === 'address' ? 'flexible' : field.key === 'date' ? 'days' : 'exact';
+    const options = mode === 'flexible'
+      ? '<option value="flexible">Coincidencia flexible</option><option value="exact">Coincidencia exacta</option>'
+      : mode === 'days'
+        ? '<option value="days">Diferencia máxima de 7 días</option><option value="exact">Misma fecha</option>'
+        : '<option value="exact">Coincidencia exacta</option><option value="flexible">Coincidencia flexible</option>';
+    return `<label class="compare-field"><input type="checkbox" data-compare="${field.key}" checked><span>${field.label}</span><select class="compare-mode" data-mode="${field.key}" aria-label="Modo de ${field.label}">${options}<option value="ignore">Ignorar diferencias</option></select></label>`;
   }).join('');
   $('runCompare').disabled = state.datasets.length < 2;
   $('selectAll').checked = true;
+  $('selectAll').indeterminate = false;
 }
 
-function selectedFields() {
-  return [...document.querySelectorAll('[data-compare]:checked')].map((input) => input.dataset.compare);
+function comparisonConfig() {
+  return [...document.querySelectorAll('[data-compare]:checked')].map((input) => ({
+    field: input.dataset.compare,
+    mode: document.querySelector(`[data-mode="${input.dataset.compare}"]`)?.value || 'exact'
+  })).filter((config) => config.mode !== 'ignore');
+}
+
+function renderSourceFilter() {
+  const current = state.sourceFilter;
+  $('sourceFilter').innerHTML = '<option value="">Todos los archivos</option>' + state.datasets.map((dataset) => `<option value="${dataset.id}" ${dataset.id === current ? 'selected' : ''}>${escapeHtml(dataset.title)}</option>`).join('');
 }
 
 function buildRecords() {
@@ -218,7 +240,7 @@ function similarity(left, right) {
 
 function groupRecords() {
   const primary = $('primaryKey').value;
-  const compared = selectedFields();
+  const compared = comparisonConfig();
   const keyed = new Map();
   const unkeyed = [];
   state.records.forEach((record) => {
@@ -232,24 +254,28 @@ function groupRecords() {
 
   const exclusive = groups.filter((group) => group.status === 'Exclusivo');
   const consumed = new Set();
-  for (let leftIndex = 0; leftIndex < exclusive.length; leftIndex += 1) {
-    const left = exclusive[leftIndex];
-    if (consumed.has(left.id)) continue;
-    for (let rightIndex = leftIndex + 1; rightIndex < exclusive.length; rightIndex += 1) {
-      const right = exclusive[rightIndex];
-      if (consumed.has(right.id) || left.records[0].sourceId === right.records[0].sourceId) continue;
-      const sameEmail = normalize(left.canonical.email) && normalize(left.canonical.email) === normalize(right.canonical.email);
-      const samePhone = digits(left.canonical.phone).length >= 7 && digits(left.canonical.phone).slice(-8) === digits(right.canonical.phone).slice(-8);
-      const similarName = similarity(left.canonical.name, right.canonical.name) >= .9;
-      if (sameEmail || (samePhone && similarName)) {
-        left.records.push(...right.records);
-        left.sources = [...new Set(left.records.map((record) => record.source))];
-        left.status = 'Posible';
-        consumed.add(right.id);
-        break;
-      }
+  const candidateBuckets = new Map();
+  exclusive.forEach((group) => {
+    const email = normalize(group.canonical.email);
+    const phone = digits(group.canonical.phone).slice(-8);
+    const name = normalize(group.canonical.name);
+    const keys = [email ? `email:${email}` : '', phone.length >= 7 && name ? `phone-name:${phone}:${name}` : ''].filter(Boolean);
+    keys.forEach((key) => { if (!candidateBuckets.has(key)) candidateBuckets.set(key, []); candidateBuckets.get(key).push(group); });
+  });
+  candidateBuckets.forEach((bucket) => {
+    const available = bucket.filter((group) => !consumed.has(group.id));
+    if (available.length < 2) return;
+    const base = available[0];
+    available.slice(1).forEach((candidate) => {
+      if (consumed.has(candidate.id) || base.records.some((record) => record.sourceId === candidate.records[0].sourceId)) return;
+      base.records.push(...candidate.records);
+      consumed.add(candidate.id);
+    });
+    if (base.records.length > 1) {
+      base.sources = [...new Set(base.records.map((record) => record.source))];
+      base.status = 'Posible';
     }
-  }
+  });
   state.groups = groups.filter((group) => !consumed.has(group.id)).map((group, index) => ({ ...group, number: index + 1 }));
 }
 
@@ -257,21 +283,50 @@ function createGroup(key, records, compared) {
   const canonical = Object.fromEntries(STANDARD_FIELDS.map((field) => [field.key, records.find((record) => String(record.values[field.key]).trim())?.values[field.key] || '']));
   let status = records.length === 1 ? 'Exclusivo' : 'Exacto';
   if (records.length > 1) {
-    const differences = compared.filter((field) => new Set(records.map((record) => normalizedField(record.values[field], field)).filter(Boolean)).size > 1);
+    const differences = compared.filter(({ field, mode }) => fieldHasDifference(records, field, mode));
     if (differences.length >= Math.max(2, Math.ceil(compared.length / 2))) status = 'Conflicto';
     else if (differences.length) status = 'Posible';
   }
   return { id: crypto.randomUUID(), key, records, canonical, status, sources: [...new Set(records.map((record) => record.source))] };
 }
 
+function fieldHasDifference(records, field, mode) {
+  const values = records.map((record) => record.values[field]).filter((value) => String(value).trim());
+  if (values.length < 2) return false;
+  if (mode === 'days') {
+    const dates = values.map((value) => new Date(value)).filter((date) => !Number.isNaN(date.getTime()));
+    if (dates.length < 2) return new Set(values.map(normalize)).size > 1;
+    return (Math.max(...dates.map(Number)) - Math.min(...dates.map(Number))) / 86400000 > 7;
+  }
+  if (mode === 'flexible') {
+    if (field === 'phone') return new Set(values.map((value) => digits(value).slice(-8))).size > 1;
+    const reference = values[0];
+    return values.slice(1).some((value) => similarity(reference, value) < .82);
+  }
+  return new Set(values.map((value) => normalizedField(value, field))).size > 1;
+}
+
 function runComparison() {
   if (state.datasets.length < 2) return;
+  const primaryField = $('primaryKey').value;
+  const missingPrimary = state.datasets.filter((dataset) => !dataset.map[primaryField]);
+  if (missingPrimary.length) {
+    $('runStatus').textContent = `Asigna “${fieldByKey(primaryField).label}” en: ${missingPrimary.map((dataset) => dataset.title).join(', ')}.`;
+    return;
+  }
   $('runStatus').textContent = 'Analizando y agrupando registros…';
   requestAnimationFrame(() => {
     buildRecords();
+    if (!state.records.length) {
+      $('runStatus').textContent = 'Los archivos no contienen registros para comparar.';
+      return;
+    }
     groupRecords();
-    state.filter = 'all'; state.search = ''; state.page = 0; state.selected = state.groups[0]?.id || null;
+    state.filter = 'all'; state.sourceFilter = ''; state.search = ''; state.page = 0; state.selected = state.groups[0]?.id || null; state.detailView = 'grouped';
+    state.lastRun = new Date();
     $('search').value = '';
+    $('sourceFilter').value = '';
+    document.querySelectorAll('.detail-tabs button').forEach((button) => button.classList.toggle('active', button.dataset.detailView === 'grouped'));
     renderResults(); updateProgress(true);
     $('runStatus').textContent = `Listo: ${formatNumber(state.records.length)} registros analizados.`;
     document.querySelector('[data-scroll="resultados"]').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -280,7 +335,11 @@ function runComparison() {
 
 function filteredGroups() {
   const needle = normalize(state.search);
-  return state.groups.filter((group) => (state.filter === 'all' || group.status === state.filter) && (!needle || normalize(Object.values(group.canonical).join(' ') + group.sources.join(' ')).includes(needle)));
+  return state.groups.filter((group) =>
+    (state.filter === 'all' || group.status === state.filter)
+    && (!state.sourceFilter || group.records.some((record) => record.sourceId === state.sourceFilter))
+    && (!needle || normalize(Object.values(group.canonical).join(' ') + group.sources.join(' ')).includes(needle))
+  );
 }
 
 function renderResults() {
@@ -295,6 +354,10 @@ function renderResults() {
   $('filterButton').disabled = !state.groups.length;
   $('exportCsv').disabled = !state.groups.length;
   $('exportXlsx').disabled = !state.groups.length;
+  if (!state.groups.length) {
+    $('filterPopover').hidden = true;
+    $('filterButton').setAttribute('aria-expanded', 'false');
+  }
 
   const all = filteredGroups();
   const pageSize = 8;
@@ -324,10 +387,17 @@ function renderDetail() {
     return;
   }
   $('groupNumber').textContent = `Grupo #${group.number}`;
-  $('detailContent').innerHTML = `<div class="detail-summary"><div><h3><span class="status-chip ${group.status}">${group.status}</span> ${escapeHtml(group.canonical.id || 'Sin ID')} – ${escapeHtml(group.canonical.name || 'Sin nombre')}</h3><small>${group.records.length} ${group.records.length === 1 ? 'registro' : 'registros'} en este grupo</small></div></div>${group.records.map((record) => {
+  if (state.detailView === 'history') {
+    const fields = comparisonConfig().map(({ field }) => fieldByKey(field)?.label).filter(Boolean).join(', ') || 'Ninguno';
+    $('detailContent').innerHTML = `<div class="detail-summary"><div><h3>Resumen del análisis</h3><small>Trazabilidad de esta agrupación durante la sesión actual</small></div></div><article class="history-card"><div><span>Procesado</span><b>${state.lastRun ? state.lastRun.toLocaleString('es') : '—'}</b></div><div><span>Clave principal</span><b>${escapeHtml(fieldByKey($('primaryKey').value)?.label || '—')}</b></div><div><span>Campos comparados</span><b>${escapeHtml(fields)}</b></div><div><span>Fuentes vinculadas</span><b>${escapeHtml(group.sources.join(' · '))}</b></div><div><span>Resultado</span><b>${group.status}</b></div></article>`;
+    return;
+  }
+  const title = state.detailView === 'individual' ? 'Registros individuales' : `${escapeHtml(group.canonical.id || 'Sin ID')} – ${escapeHtml(group.canonical.name || 'Sin nombre')}`;
+  $('detailContent').innerHTML = `<div class="detail-summary"><div><h3><span class="status-chip ${group.status}">${group.status}</span> ${title}</h3><small>${group.records.length} ${group.records.length === 1 ? 'registro' : 'registros'} en este grupo</small></div></div>${group.records.map((record) => {
     const type = ['xlsx', 'xls'].includes(record.extension) ? 'XLS' : record.extension.toUpperCase();
     const iconClass = record.extension === 'pdf' ? 'pdf' : ['csv', 'tsv'].includes(record.extension) ? 'csv' : record.extension === 'txt' ? 'txt' : '';
-    return `<article class="detail-source"><span class="file-icon ${iconClass}">${type}</span><strong title="${escapeHtml(record.source)}">${escapeHtml(record.source)}</strong><div class="detail-fields"><span>Nombre</span><b>${escapeHtml(record.values.name || '—')}</b><span>Email</span><b>${escapeHtml(record.values.email || '—')}</b><span>Teléfono</span><b>${escapeHtml(record.values.phone || '—')}</b><span>Dirección</span><b>${escapeHtml(record.values.address || '—')}</b></div></article>`;
+    const visibleFields = state.detailView === 'individual' ? STANDARD_FIELDS : STANDARD_FIELDS.filter((field) => ['name', 'email', 'phone', 'address'].includes(field.key));
+    return `<article class="detail-source"><span class="file-icon ${iconClass}">${type}</span><strong title="${escapeHtml(record.source)}">${escapeHtml(record.source)}</strong><div class="detail-fields">${visibleFields.map((field) => `<span>${field.label}</span><b>${escapeHtml(record.values[field.key] || '—')}</b>`).join('')}</div></article>`;
   }).join('')}`;
 }
 
@@ -368,6 +438,15 @@ async function exportExcel() {
   XLSX.writeFile(workbook, 'CompClick_resultados.xlsx');
 }
 
+function showPreview() {
+  const dataset = state.datasets[0];
+  if (!dataset) return;
+  $('previewCaption').textContent = `${dataset.title} · primeras ${Math.min(20, dataset.rows.length)} filas`;
+  $('previewHead').innerHTML = `<tr>${dataset.headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr>`;
+  $('previewBody').innerHTML = dataset.rows.slice(0, 20).map((row) => `<tr>${dataset.headers.map((header) => `<td>${escapeHtml(row[header] || '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${Math.max(1, dataset.headers.length)}">El archivo no contiene registros.</td></tr>`;
+  $('previewDialog').showModal();
+}
+
 function updateProgress(completed = false) {
   let active = state.datasets.length ? 2 : 1;
   if (state.datasets.length >= 2) active = 3;
@@ -381,9 +460,39 @@ const dropZone = $('dropZone');
 ['dragleave', 'drop'].forEach((eventName) => dropZone.addEventListener(eventName, (event) => { event.preventDefault(); dropZone.classList.remove('dragging'); }));
 dropZone.addEventListener('drop', (event) => addFiles([...event.dataTransfer.files]));
 
-$('selectAll').addEventListener('change', (event) => document.querySelectorAll('[data-compare]').forEach((input) => { input.checked = event.target.checked; }));
+$('selectAll').addEventListener('change', (event) => {
+  event.target.indeterminate = false;
+  document.querySelectorAll('[data-compare]').forEach((input) => { input.checked = event.target.checked; });
+});
+$('compareFields').addEventListener('change', (event) => {
+  if (!event.target.matches('[data-compare]')) return;
+  const checks = [...document.querySelectorAll('[data-compare]')];
+  const checked = checks.filter((input) => input.checked).length;
+  $('selectAll').checked = checked === checks.length;
+  $('selectAll').indeterminate = checked > 0 && checked < checks.length;
+});
+$('autoMapAll').addEventListener('click', () => {
+  state.datasets.forEach(autoMap);
+  renderMapping();
+  $('loadStatus').textContent = 'Mapeo automático actualizado.';
+});
+$('previewData').addEventListener('click', showPreview);
+$('closePreview').addEventListener('click', () => $('previewDialog').close());
+$('previewDialog').addEventListener('click', (event) => { if (event.target === $('previewDialog')) $('previewDialog').close(); });
 $('runCompare').addEventListener('click', runComparison);
 $('search').addEventListener('input', (event) => { state.search = event.target.value; state.page = 0; renderResults(); });
+$('filterButton').addEventListener('click', () => {
+  const willOpen = $('filterPopover').hidden;
+  $('filterPopover').hidden = !willOpen;
+  $('filterButton').setAttribute('aria-expanded', String(willOpen));
+});
+$('sourceFilter').addEventListener('change', (event) => { state.sourceFilter = event.target.value; state.page = 0; renderResults(); });
+$('clearFilters').addEventListener('click', () => {
+  state.filter = 'all'; state.sourceFilter = ''; state.search = ''; state.page = 0;
+  $('search').value = ''; $('sourceFilter').value = ''; $('filterPopover').hidden = true; $('filterButton').setAttribute('aria-expanded', 'false');
+  document.querySelectorAll('.status-tab').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'all'));
+  renderResults();
+});
 $('statusTabs').addEventListener('click', (event) => {
   const button = event.target.closest('[data-filter]');
   if (!button) return;
@@ -393,8 +502,14 @@ $('statusTabs').addEventListener('click', (event) => {
 });
 $('previousPage').addEventListener('click', () => { if (state.page > 0) { state.page -= 1; renderResults(); } });
 $('nextPage').addEventListener('click', () => { state.page += 1; renderResults(); });
-$('exportCsv').addEventListener('click', () => download(new Blob([csvText(consolidatedRows())], { type: 'text/csv;charset=utf-8' }), 'CompClick_resultados.csv'));
-$('exportXlsx').addEventListener('click', () => exportExcel().catch((error) => alert(error.message)));
+$('exportCsv').addEventListener('click', () => {
+  document.querySelectorAll('.progress-step').forEach((button) => button.classList.toggle('active', button.dataset.step === '5'));
+  download(new Blob([csvText(consolidatedRows())], { type: 'text/csv;charset=utf-8' }), 'CompClick_resultados.csv');
+});
+$('exportXlsx').addEventListener('click', () => {
+  document.querySelectorAll('.progress-step').forEach((button) => button.classList.toggle('active', button.dataset.step === '5'));
+  exportExcel().catch((error) => alert(error.message));
+});
 
 document.querySelectorAll('[data-scroll]').forEach((button) => button.addEventListener('click', () => {
   const target = $(button.dataset.scroll);
@@ -407,6 +522,8 @@ document.querySelectorAll('[data-scroll]').forEach((button) => button.addEventLi
 
 document.querySelectorAll('.detail-tabs button').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.detail-tabs button').forEach((item) => item.classList.toggle('active', item === button));
+  state.detailView = button.dataset.detailView;
+  renderDetail();
 }));
 
 $('themeToggle').addEventListener('click', () => {
@@ -415,6 +532,9 @@ $('themeToggle').addEventListener('click', () => {
 });
 if (localStorage.getItem('compclick-theme') === 'light') document.body.classList.add('light');
 
+renderFiles();
+renderMapping();
 renderCompareControls();
+renderSourceFilter();
 renderResults();
 updateProgress();
