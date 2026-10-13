@@ -16,10 +16,10 @@
         <span class="logo-composite" aria-hidden="true"><span class="logo-crop logo-mark"><img src="assets/compclick-logo.png" alt=""></span><span class="brand-text">Comp<span class="brand-color">Click</span></span></span>
       </a>
       <nav class="sidebar-nav">
-        <button class="nav-item active" type="button" data-scroll="inicio" aria-current="page"><svg aria-hidden="true"><use href="#i-home"></use></svg><span>Inicio</span></button>
-        <button class="nav-item" type="button" data-scroll="resultados"><svg aria-hidden="true"><use href="#i-file"></use></svg><span>Comparar</span></button>
-        <button class="nav-item" type="button" data-scroll="resultados"><svg aria-hidden="true"><use href="#i-history"></use></svg><span>Resultados</span></button>
-        <button class="nav-item" type="button" data-scroll="comparacion"><svg aria-hidden="true"><use href="#i-settings"></use></svg><span>Configuración</span></button>
+        <button class="nav-item active" type="button" data-go-step="1" aria-current="page"><svg aria-hidden="true"><use href="#i-home"></use></svg><span>Inicio</span></button>
+        <button class="nav-item" type="button" data-go-step="3"><svg aria-hidden="true"><use href="#i-file"></use></svg><span>Comparar</span></button>
+        <button class="nav-item" type="button" data-go-step="4"><svg aria-hidden="true"><use href="#i-history"></use></svg><span>Resultados</span></button>
+        <button class="nav-item" type="button" data-go-step="2"><svg aria-hidden="true"><use href="#i-settings"></use></svg><span>Configuración</span></button>
       </nav>
       <div class="sidebar-card">
         <span class="logo-crop logo-mark small"><img src="assets/compclick-logo.png" alt=""></span>
@@ -33,31 +33,38 @@
         <div class="privacy-pill"><span class="privacy-dot"></span> Procesamiento local y privado</div>
         <div class="top-actions">
           <button class="icon-button" id="themeToggle" type="button" aria-label="Cambiar tema" title="Cambiar tema"><svg aria-hidden="true"><use href="#i-sun"></use></svg></button>
-          <button class="icon-button" type="button" data-scroll="comparacion" aria-label="Abrir configuración" title="Configuración"><svg aria-hidden="true"><use href="#i-settings"></use></svg></button>
+          <button class="icon-button" type="button" data-go-step="2" aria-label="Abrir configuración" title="Configuración"><svg aria-hidden="true"><use href="#i-settings"></use></svg></button>
           <div class="avatar" aria-label="Perfil">CC</div>
         </div>
       </header>
 
       <main id="inicio">
         <nav class="progress" aria-label="Proceso de comparación">
-          <button class="progress-step active" type="button" data-scroll="carga" data-step="1"><span class="step-number blue">1</span><span><strong>Cargar archivos</strong><small>Selecciona tus archivos</small></span><i>›</i></button>
-          <button class="progress-step" type="button" data-scroll="mapeo" data-step="2"><span class="step-number amber">2</span><span><strong>Mapeo inteligente</strong><small>Relaciona las columnas</small></span><i>›</i></button>
-          <button class="progress-step" type="button" data-scroll="comparacion" data-step="3"><span class="step-number coral">3</span><span><strong>Comparación</strong><small>Configura las reglas</small></span><i>›</i></button>
-          <button class="progress-step" type="button" data-scroll="resultados" data-step="4"><span class="step-number green">4</span><span><strong>Agrupación</strong><small>Revisa los resultados</small></span><i>›</i></button>
-          <button class="progress-step" type="button" data-scroll="exportar" data-step="5"><span class="step-number blue">5</span><span><strong>Exportación</strong><small>Descarga el archivo final</small></span></button>
+          <button class="progress-step active" type="button" data-go-step="1" data-step="1"><span class="step-number blue">1</span><span><strong>Cargar archivos</strong><small>Selecciona tus archivos</small></span><i>›</i></button>
+          <button class="progress-step" type="button" data-go-step="2" data-step="2"><span class="step-number amber">2</span><span><strong>Mapeo inteligente</strong><small>Relaciona las columnas</small></span><i>›</i></button>
+          <button class="progress-step" type="button" data-go-step="3" data-step="3"><span class="step-number coral">3</span><span><strong>Comparación</strong><small>Configura las reglas</small></span><i>›</i></button>
+          <button class="progress-step" type="button" data-go-step="4" data-step="4"><span class="step-number green">4</span><span><strong>Agrupación</strong><small>Revisa los resultados</small></span><i>›</i></button>
+          <button class="progress-step" type="button" data-go-step="5" data-step="5"><span class="step-number blue">5</span><span><strong>Exportación</strong><small>Descarga el archivo final</small></span></button>
         </nav>
 
         <div class="workspace">
-          <div class="setup-grid">
-            <section class="card upload-card" id="carga">
-              <div class="card-heading"><span class="mini-step blue">1</span><div><h1>Cargar archivos</h1><p>Sube dos o más archivos para comparar.</p></div></div>
-              <label class="drop-zone" id="dropZone" for="files"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>Arrastra y suelta archivos aquí</strong><span>o haz clic para seleccionar</span><small>PDF · CSV · Excel (.xlsx, .xls) · TXT</small></label>
-              <input id="files" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf" multiple hidden>
-              <div class="file-list" id="fileList" aria-live="polite"><div class="empty-files"><span>Aún no hay archivos</span><small>Agrega al menos dos para comenzar</small></div></div>
-              <p class="inline-status" id="loadStatus" role="status"></p>
-            </section>
+          <section class="flow-screen active" data-flow-screen="1" aria-labelledby="screen1Title">
+            <div class="stage-intro"><span>Paso 1 de 5</span><div><h1 id="screen1Title">Reúne las fuentes que quieres analizar</h1><p>CompClick procesa todo localmente. Los archivos pueden tener columnas distintas o no guardar relación entre sí.</p></div></div>
+            <div class="upload-layout">
+              <section class="card upload-card" id="carga">
+                <div class="card-heading"><span class="mini-step blue">1</span><div><h2>Cargar archivos</h2><p>Sube dos o más fuentes para comparar.</p></div></div>
+                <label class="drop-zone" id="dropZone" for="files"><svg aria-hidden="true"><use href="#i-upload"></use></svg><strong>Arrastra y suelta archivos aquí</strong><span>o haz clic para seleccionar</span><small>PDF · CSV · Excel (.xlsx, .xls) · TXT</small></label>
+                <input id="files" type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf" multiple hidden>
+                <div class="file-list" id="fileList" aria-live="polite"><div class="empty-files"><span>Aún no hay archivos</span><small>Agrega al menos dos para comenzar</small></div></div>
+                <p class="inline-status" id="loadStatus" role="status"></p>
+              </section>
+              <aside class="card guidance-card"><span class="guidance-icon"><svg aria-hidden="true"><use href="#i-spark"></use></svg></span><h2>No necesitas preparar los archivos</h2><p>El sistema intentará reconocer tablas en PDF, hojas de Excel y listados de texto. Si una fuente no comparte datos con las demás, sus filas se conservarán como <strong>Diferentes</strong>.</p><ul><li>La estructura puede variar entre archivos.</li><li>Los campos vacíos no bloquean el análisis.</li><li>Podrás revisar el mapeo antes de comparar.</li></ul></aside>
+            </div>
+          </section>
 
-            <section class="card mapping-card" id="mapeo">
+          <section class="flow-screen" data-flow-screen="2" aria-labelledby="screen2Title">
+            <div class="stage-intro"><span>Paso 2 de 5</span><div><h1 id="screen2Title">Confirma qué significa cada columna</h1><p>Solo asigna lo que CompClick pueda utilizar. No es obligatorio que todos los archivos tengan los mismos campos.</p></div></div>
+            <section class="card mapping-card stage-card" id="mapeo">
               <div class="card-heading heading-row">
                 <div class="heading-group"><span class="mini-step amber">2</span><div><h2>Mapeo inteligente</h2><p>CompClick sugiere coincidencias entre columnas.</p></div></div>
                 <button class="auto-badge" id="autoMapAll" type="button"><svg aria-hidden="true"><use href="#i-spark"></use></svg> Detección automática</button>
@@ -65,41 +72,59 @@
               <div class="mapping-wrap"><div class="mapping-table empty-mapping" id="mappingTable"></div></div>
               <div class="mapping-footer"><label><input type="checkbox" checked disabled> Usar primera fila como encabezados</label><button id="previewData" type="button" disabled><svg aria-hidden="true"><use href="#i-eye"></use></svg> Vista previa de datos</button></div>
             </section>
+          </section>
 
-            <section class="card compare-card" id="comparacion">
-              <div class="card-heading"><span class="mini-step coral">3</span><div><h2>Comparación</h2><p>Define cómo identificar coincidencias.</p></div></div>
-              <label class="control-label">Clave de coincidencia principal<select id="primaryKey"></select></label>
-              <div class="compare-title"><strong>Campos a comparar</strong><label><input id="selectAll" type="checkbox" checked> Seleccionar todos</label></div>
-              <div class="compare-fields" id="compareFields"></div>
-              <button class="compare-button" id="runCompare" type="button" disabled><svg aria-hidden="true"><use href="#i-play"></use></svg> Comparar archivos</button>
-              <p class="inline-status" id="runStatus" role="status"></p>
-            </section>
-          </div>
+          <section class="flow-screen" data-flow-screen="3" aria-labelledby="screen3Title">
+            <div class="stage-intro"><span>Paso 3 de 5</span><div><h1 id="screen3Title">Define el criterio del análisis integral</h1><p>Todos los campos seleccionados participan en una puntuación conjunta. El identificador preferido solo refuerza la evidencia; nunca es obligatorio.</p></div></div>
+            <div class="compare-layout">
+              <section class="card compare-card stage-card" id="comparacion">
+                <div class="card-heading"><span class="mini-step coral">3</span><div><h2>Comparación</h2><p>Define cómo identificar coincidencias.</p></div></div>
+                <label class="control-label">Identificador preferido (opcional)<select id="primaryKey"></select></label>
+                <div class="holistic-note"><svg aria-hidden="true"><use href="#i-spark"></use></svg><div><strong>Análisis de registro completo</strong><span>Combina la evidencia disponible en todos los campos. Si no encuentra relación suficiente, conserva el registro como diferente.</span></div></div>
+                <div class="compare-title"><strong>Campos a comparar</strong><label><input id="selectAll" type="checkbox" checked> Seleccionar todos</label></div>
+                <div class="compare-fields" id="compareFields"></div>
+                <button class="compare-button" id="runCompare" type="button" disabled><svg aria-hidden="true"><use href="#i-play"></use></svg> Analizar archivos</button>
+                <p class="inline-status" id="runStatus" role="status"></p>
+              </section>
+              <aside class="card score-card"><h2>Cómo se toma la decisión</h2><div><b>Coincidencia fuerte</b><span>Varios campos compatibles o un identificador inequívoco.</span></div><div><b>Posible</b><span>Hay evidencia parcial que conviene revisar.</span></div><div><b>Diferente</b><span>No se encontró relación; el registro se conserva sin bloquear el proceso.</span></div><div><b>Conflicto</b><span>Hay similitud general, pero datos importantes se contradicen.</span></div></aside>
+            </div>
+          </section>
 
-          <div class="results-grid" id="resultados">
-            <section class="card results-card">
-              <div class="card-heading heading-row results-heading">
-                <div class="heading-group"><span class="mini-step green">4</span><div><h2>Resultados de comparación</h2><p id="resultsSummary">Carga archivos para comenzar el análisis.</p></div></div>
-                <div class="result-tools"><label class="search-box"><svg aria-hidden="true"><use href="#i-search"></use></svg><input id="search" type="search" placeholder="Buscar por nombre, email o ID..." disabled></label><button class="filter-button" id="filterButton" type="button" disabled aria-expanded="false"><svg aria-hidden="true"><use href="#i-filter"></use></svg> Filtros</button><div class="filter-popover" id="filterPopover" hidden><label>Fuente<select id="sourceFilter"><option value="">Todos los archivos</option></select></label><button id="clearFilters" type="button">Limpiar filtros</button></div></div>
-              </div>
-              <div class="status-tabs" id="statusTabs">
-                <button class="status-tab active" type="button" data-filter="all">Todos <span id="countAll">0</span></button>
-                <button class="status-tab exact" type="button" data-filter="Exacto">Exactos <span id="countExact">0</span></button>
-                <button class="status-tab possible" type="button" data-filter="Posible">Posibles <span id="countPossible">0</span></button>
-                <button class="status-tab exclusive" type="button" data-filter="Exclusivo">Exclusivos <span id="countExclusive">0</span></button>
-                <button class="status-tab conflict" type="button" data-filter="Conflicto">Conflictos <span id="countConflict">0</span></button>
-              </div>
-              <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Estado</th><th>ID cliente</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Ciudad</th><th>Fuentes</th><th>Acciones</th></tr></thead><tbody id="resultsBody"><tr class="empty-row"><td colspan="8"><svg aria-hidden="true"><use href="#i-compare"></use></svg><strong>Los resultados aparecerán aquí</strong><span>Agrega tus archivos, revisa el mapeo y ejecuta la comparación.</span></td></tr></tbody></table></div>
-              <div class="table-footer"><small id="paginationText">Mostrando 0 registros</small><div class="pagination"><button id="previousPage" type="button" disabled>‹</button><span id="pageButtons"><b>1</b></span><button id="nextPage" type="button" disabled>›</button></div></div>
-            </section>
+          <section class="flow-screen" data-flow-screen="4" id="resultados" aria-labelledby="screen4Title">
+            <div class="stage-intro compact"><span>Paso 4 de 5</span><div><h1 id="screen4Title">Revisa grupos, diferencias y conflictos</h1><p>Filtra los resultados y abre cada grupo para inspeccionar la evidencia de todas las fuentes.</p></div></div>
+            <div class="results-grid">
+              <section class="card results-card">
+                <div class="card-heading heading-row results-heading">
+                  <div class="heading-group"><span class="mini-step green">4</span><div><h2>Resultados de comparación</h2><p id="resultsSummary">Carga archivos para comenzar el análisis.</p></div></div>
+                  <div class="result-tools"><label class="search-box"><svg aria-hidden="true"><use href="#i-search"></use></svg><input id="search" type="search" placeholder="Buscar por nombre, email o ID..." disabled></label><button class="filter-button" id="filterButton" type="button" disabled aria-expanded="false"><svg aria-hidden="true"><use href="#i-filter"></use></svg> Filtros</button><div class="filter-popover" id="filterPopover" hidden><label>Fuente<select id="sourceFilter"><option value="">Todos los archivos</option></select></label><button id="clearFilters" type="button">Limpiar filtros</button></div></div>
+                </div>
+                <div class="status-tabs" id="statusTabs">
+                  <button class="status-tab active" type="button" data-filter="all">Todos <span id="countAll">0</span></button>
+                  <button class="status-tab exact" type="button" data-filter="Exacto">Exactos <span id="countExact">0</span></button>
+                  <button class="status-tab possible" type="button" data-filter="Posible">Posibles <span id="countPossible">0</span></button>
+                  <button class="status-tab exclusive" type="button" data-filter="Diferente">Diferentes <span id="countExclusive">0</span></button>
+                  <button class="status-tab conflict" type="button" data-filter="Conflicto">Conflictos <span id="countConflict">0</span></button>
+                </div>
+                <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Estado</th><th>ID cliente</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Ciudad</th><th>Fuentes</th><th>Acciones</th></tr></thead><tbody id="resultsBody"><tr class="empty-row"><td colspan="8"><svg aria-hidden="true"><use href="#i-compare"></use></svg><strong>Los resultados aparecerán aquí</strong><span>Agrega tus archivos, revisa el mapeo y ejecuta la comparación.</span></td></tr></tbody></table></div>
+                <div class="table-footer"><small id="paginationText">Mostrando 0 registros</small><div class="pagination"><button id="previousPage" type="button" disabled>‹</button><span id="pageButtons"><b>1</b></span><button id="nextPage" type="button" disabled>›</button></div></div>
+              </section>
+              <section class="card detail-card">
+                <div class="detail-heading"><div><span class="detail-icon"><svg aria-hidden="true"><use href="#i-users"></use></svg></span><strong>Detalle de registro y agrupación</strong></div><span class="group-number" id="groupNumber">Sin selección</span></div>
+                <div class="detail-tabs"><button class="active" type="button" data-detail-view="grouped">Vista agrupada</button><button type="button" data-detail-view="individual">Datos individuales</button><button type="button" data-detail-view="history">Historial</button></div>
+                <div class="detail-content" id="detailContent"><div class="detail-empty"><svg aria-hidden="true"><use href="#i-users"></use></svg><strong>Selecciona un resultado</strong><p>Aquí verás los registros de cada fuente y podrás revisar sus diferencias.</p></div></div>
+              </section>
+            </div>
+          </section>
 
-            <section class="card detail-card" id="exportar">
-              <div class="detail-heading"><div><span class="detail-icon"><svg aria-hidden="true"><use href="#i-users"></use></svg></span><strong>Detalle de registro y agrupación</strong></div><span class="group-number" id="groupNumber">Sin selección</span></div>
-              <div class="detail-tabs"><button class="active" type="button" data-detail-view="grouped">Vista agrupada</button><button type="button" data-detail-view="individual">Datos individuales</button><button type="button" data-detail-view="history">Historial</button></div>
-              <div class="detail-content" id="detailContent"><div class="detail-empty"><svg aria-hidden="true"><use href="#i-users"></use></svg><strong>Selecciona un resultado</strong><p>Aquí verás los registros de cada fuente y podrás revisar sus diferencias.</p></div></div>
-              <div class="export-bar"><button id="exportCsv" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg> CSV</button><button class="primary-export" id="exportXlsx" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg> Exportar Excel</button></div>
+          <section class="flow-screen" data-flow-screen="5" id="exportar" aria-labelledby="screen5Title">
+            <div class="stage-intro"><span>Paso 5 de 5</span><div><h1 id="screen5Title">Exporta el resultado que necesitas</h1><p>El consolidado mantiene el estado, las fuentes y el número de registros vinculados para que el análisis sea trazable.</p></div></div>
+            <section class="card export-card">
+              <div class="export-illustration"><svg aria-hidden="true"><use href="#i-download"></use></svg></div>
+              <div><h2>Tu consolidado está listo</h2><p id="exportSummary">Ejecuta una comparación para habilitar las descargas.</p><div class="export-options"><button id="exportCsv" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg><span><strong>Descargar CSV</strong><small>Ligero y compatible</small></span></button><button class="primary-export" id="exportXlsx" type="button" disabled><svg aria-hidden="true"><use href="#i-download"></use></svg><span><strong>Exportar Excel</strong><small>Consolidado y originales</small></span></button></div></div>
             </section>
-          </div>
+          </section>
+
+          <div class="flow-actions"><button id="flowBack" type="button">← Anterior</button><span id="flowHint">Carga al menos dos fuentes para comenzar.</span><button class="flow-next" id="flowNext" type="button">Siguiente →</button></div>
         </div>
       </main>
     </div>

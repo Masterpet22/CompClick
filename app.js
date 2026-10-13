@@ -20,7 +20,8 @@ const state = {
   page: 0,
   selected: null,
   detailView: 'grouped',
-  lastRun: null
+  lastRun: null,
+  currentStep: 1
 };
 
 const fieldByKey = (key) => STANDARD_FIELDS.find((field) => field.key === key);
@@ -33,7 +34,8 @@ const formatNumber = (value) => new Intl.NumberFormat('es').format(value);
 const formatBytes = (bytes) => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 
 function normalizedField(value, field) {
-  if (field === 'phone' || field === 'id') return digits(value);
+  if (field === 'phone') return digits(value);
+  if (field === 'id') return normalize(value).replace(/[^a-z0-9]/g, '');
   return normalize(value);
 }
 
@@ -63,14 +65,14 @@ function parseCSV(text, forcedSeparator) {
   return rows;
 }
 
-function matrixToDataset(matrix, title, file) {
+function matrixToDataset(matrix, title, file, metadata = {}) {
   const copy = matrix.map((row) => [...row]);
   const rawHeaders = copy.shift() || [];
   const headers = rawHeaders.map((header, index) => String(header || `Columna ${index + 1}`).trim());
   const rows = copy
     .filter((row) => row.some((cell) => String(cell ?? '').trim()))
     .map((row) => Object.fromEntries(headers.map((header, index) => [header, String(row[index] ?? '')])));
-  const dataset = { id: crypto.randomUUID(), title, filename: file.name, size: file.size, extension: file.name.split('.').pop().toLowerCase(), headers, rows, map: {} };
+  const dataset = { id: crypto.randomUUID(), title, filename: file.name, size: file.size, extension: file.name.split('.').pop().toLowerCase(), headers, rows, map: {}, ...metadata };
   autoMap(dataset);
   return dataset;
 }
@@ -94,6 +96,80 @@ async function loadScript(url, ready) {
   });
 }
 
+function pdfLineCells(items) {
+  if (!items.length) return [];
+  const heights = items.map((item) => Math.abs(item.height || item.transform?.[3] || 10)).filter(Boolean).sort((a, b) => a - b);
+  const medianHeight = heights[Math.floor(heights.length / 2)] || 10;
+  const gapLimit = Math.max(9, medianHeight * 1.25);
+  const sorted = [...items].sort((a, b) => a.transform[4] - b.transform[4]);
+  const cells = [];
+  sorted.forEach((item) => {
+    const text = String(item.str || '').trim();
+    if (!text) return;
+    const x = item.transform[4];
+    const width = Number(item.width) || Math.max(4, text.length * medianHeight * .45);
+    const previous = cells[cells.length - 1];
+    if (!previous || x - previous.end > gapLimit) cells.push({ x, end: x + width, text });
+    else {
+      previous.text += `${previous.text.endsWith('-') ? '' : ' '}${text}`;
+      previous.end = Math.max(previous.end, x + width);
+    }
+  });
+  return cells;
+}
+
+function groupPdfLines(items, pageNumber) {
+  const lines = [];
+  [...items].filter((item) => String(item.str || '').trim()).sort((a, b) => b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]).forEach((item) => {
+    const y = item.transform[5];
+    let line = lines.find((candidate) => Math.abs(candidate.y - y) <= 3);
+    if (!line) { line = { y, pageNumber, items: [] }; lines.push(line); }
+    line.items.push(item);
+  });
+  return lines.sort((a, b) => b.y - a.y).map((line) => ({ ...line, cells: pdfLineCells(line.items) }));
+}
+
+async function extractPdfMatrix(pdf) {
+  const lines = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent({ normalizeWhitespace: true });
+    lines.push(...groupPdfLines(content.items, pageNumber));
+  }
+  if (!lines.length) throw new Error('El PDF no contiene texto seleccionable. Aplica OCR al documento y vuelve a intentarlo.');
+
+  const structured = lines.map((line, index) => ({ ...line, index })).filter((line) => line.cells.length >= 2);
+  const frequencies = new Map();
+  structured.forEach((line) => frequencies.set(line.cells.length, (frequencies.get(line.cells.length) || 0) + 1));
+  const targetColumns = [...frequencies.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0] || 0;
+  const headerLine = structured.find((line) => line.cells.length === targetColumns);
+
+  if (targetColumns < 2 || !headerLine || (frequencies.get(targetColumns) || 0) < 2) {
+    const textRows = lines.map((line) => line.items.sort((a, b) => a.transform[4] - b.transform[4]).map((item) => String(item.str || '').trim()).filter(Boolean).join(' ')).filter(Boolean);
+    return { matrix: [['Texto'], ...textRows.map((text) => [text])], mode: 'text' };
+  }
+
+  const header = headerLine.cells.map((cell, index) => cell.text || `Columna ${index + 1}`);
+  const starts = headerLine.cells.map((cell) => cell.x);
+  const boundaries = starts.slice(1).map((start, index) => (starts[index] + start) / 2);
+  const rows = [];
+  lines.slice(headerLine.index + 1).forEach((line) => {
+    const row = Array.from({ length: header.length }, () => '');
+    line.items.sort((a, b) => a.transform[4] - b.transform[4]).forEach((item) => {
+      const text = String(item.str || '').trim();
+      if (!text) return;
+      const center = item.transform[4] + (Number(item.width) || 0) / 2;
+      let column = boundaries.findIndex((boundary) => center < boundary);
+      if (column < 0) column = header.length - 1;
+      row[column] = `${row[column]} ${text}`.trim();
+    });
+    const isHeader = row.every((value, index) => normalize(value) === normalize(header[index]));
+    if (!isHeader && row.filter(Boolean).length >= 2) rows.push(row);
+  });
+  if (!rows.length) return { matrix: [['Texto'], ...lines.map((line) => [line.cells.map((cell) => cell.text).join(' · ')])], mode: 'text' };
+  return { matrix: [header, ...rows], mode: 'table' };
+}
+
 async function readFile(file) {
   const extension = file.name.split('.').pop().toLowerCase();
   if (['csv', 'tsv', 'txt'].includes(extension)) {
@@ -112,23 +188,8 @@ async function readFile(file) {
     await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => Boolean(window.pdfjsLib));
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-    const lines = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const rowsByY = new Map();
-      content.items.forEach((item) => {
-        const y = Math.round(item.transform[5] / 4) * 4;
-        if (!rowsByY.has(y)) rowsByY.set(y, []);
-        rowsByY.get(y).push(item);
-      });
-      [...rowsByY.entries()].sort((a, b) => b[0] - a[0]).forEach(([, items]) => {
-        lines.push(items.sort((a, b) => a.transform[4] - b.transform[4]).map((item) => item.str).join('  '));
-      });
-    }
-    const matrix = lines.map((line) => line.split(/\t|\s{2,}/));
-    if (!matrix.some((row) => row.length > 1)) throw new Error('El PDF no contiene una tabla de texto reconocible.');
-    return [matrixToDataset(matrix, file.name, file)];
+    const extracted = await extractPdfMatrix(pdf);
+    return [matrixToDataset(extracted.matrix, file.name, file, { pdfMode: extracted.mode, pdfPages: pdf.numPages })];
   }
   throw new Error('Formato no compatible.');
 }
@@ -146,7 +207,9 @@ async function addFiles(files) {
   renderCompareControls();
   renderSourceFilter();
   updateProgress();
-  $('loadStatus').textContent = errors.length ? errors.join(' · ') : `${state.datasets.length} ${state.datasets.length === 1 ? 'archivo cargado' : 'archivos cargados'} correctamente.`;
+  const textPdfs = state.datasets.filter((dataset) => dataset.pdfMode === 'text').length;
+  const success = `${state.datasets.length} ${state.datasets.length === 1 ? 'fuente cargada' : 'fuentes cargadas'} correctamente.${textPdfs ? ` ${textPdfs} PDF se interpretó como texto libre y no bloqueará la comparación.` : ''}`;
+  $('loadStatus').textContent = errors.length ? `${success} ${errors.join(' · ')}` : success;
   $('files').value = '';
 }
 
@@ -162,7 +225,8 @@ function renderFiles() {
   $('fileList').innerHTML = state.datasets.map((dataset) => {
     const type = ['xlsx', 'xls'].includes(dataset.extension) ? 'XLS' : dataset.extension.toUpperCase();
     const iconClass = dataset.extension === 'pdf' ? 'pdf' : ['csv', 'tsv'].includes(dataset.extension) ? 'csv' : dataset.extension === 'txt' ? 'txt' : '';
-    return `<article class="file-item"><span class="file-icon ${iconClass}">${type}</span><span class="file-info"><strong title="${escapeHtml(dataset.title)}">${escapeHtml(dataset.title)}</strong><small>${formatNumber(dataset.rows.length)} filas · ${formatBytes(dataset.size)}</small></span><button class="remove-file" type="button" data-remove="${dataset.id}" aria-label="Quitar ${escapeHtml(dataset.title)}">×</button></article>`;
+    const pdfLabel = dataset.pdfMode === 'table' ? ' · tabla detectada' : dataset.pdfMode === 'text' ? ' · texto libre' : '';
+    return `<article class="file-item"><span class="file-icon ${iconClass}">${type}</span><span class="file-info"><strong title="${escapeHtml(dataset.title)}">${escapeHtml(dataset.title)}</strong><small>${formatNumber(dataset.rows.length)} filas · ${formatBytes(dataset.size)}${pdfLabel}</small></span><button class="remove-file" type="button" data-remove="${dataset.id}" aria-label="Quitar ${escapeHtml(dataset.title)}">×</button></article>`;
   }).join('');
   $('fileList').querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', () => {
     state.datasets = state.datasets.filter((dataset) => dataset.id !== button.dataset.remove);
@@ -186,9 +250,9 @@ function renderMapping() {
 }
 
 function renderCompareControls() {
-  const currentPrimary = $('primaryKey').value || 'id';
-  $('primaryKey').innerHTML = STANDARD_FIELDS.map((field) => `<option value="${field.key}" ${currentPrimary === field.key ? 'selected' : ''}>${field.label}</option>`).join('');
-  $('compareFields').innerHTML = STANDARD_FIELDS.filter((field) => field.key !== 'id').map((field) => {
+  const currentPrimary = $('primaryKey').value || '';
+  $('primaryKey').innerHTML = `<option value="">Análisis integral automático</option>${STANDARD_FIELDS.map((field) => `<option value="${field.key}" ${currentPrimary === field.key ? 'selected' : ''}>${field.label}</option>`).join('')}`;
+  $('compareFields').innerHTML = STANDARD_FIELDS.map((field) => {
     const mode = field.key === 'phone' || field.key === 'address' ? 'flexible' : field.key === 'date' ? 'days' : 'exact';
     const options = mode === 'flexible'
       ? '<option value="flexible">Coincidencia flexible</option><option value="exact">Coincidencia exacta</option>'
@@ -238,56 +302,137 @@ function similarity(left, right) {
   return 1 - previous[b.length] / Math.max(a.length, b.length);
 }
 
-function groupRecords() {
-  const primary = $('primaryKey').value;
-  const compared = comparisonConfig();
-  const keyed = new Map();
-  const unkeyed = [];
-  state.records.forEach((record) => {
-    const key = normalizedField(record.values[primary], primary);
-    if (!key) unkeyed.push(record);
-    else { if (!keyed.has(key)) keyed.set(key, []); keyed.get(key).push(record); }
-  });
+const FIELD_WEIGHTS = { id: .30, email: .23, phone: .18, name: .15, address: .07, city: .04, date: .03 };
+const isReliablePhone = (value) => {
+  const phone = digits(value).slice(-8);
+  return phone.length >= 7 && new Set(phone).size >= 3 && !/^(01234567|12345678|87654321|00000000)$/.test(phone);
+};
 
-  const groups = [...keyed.entries()].map(([key, records]) => createGroup(key, records, compared));
-  unkeyed.forEach((record) => groups.push(createGroup('', [record], compared)));
-
-  const exclusive = groups.filter((group) => group.status === 'Exclusivo');
-  const consumed = new Set();
-  const candidateBuckets = new Map();
-  exclusive.forEach((group) => {
-    const email = normalize(group.canonical.email);
-    const phone = digits(group.canonical.phone).slice(-8);
-    const name = normalize(group.canonical.name);
-    const keys = [email ? `email:${email}` : '', phone.length >= 7 && name ? `phone-name:${phone}:${name}` : ''].filter(Boolean);
-    keys.forEach((key) => { if (!candidateBuckets.has(key)) candidateBuckets.set(key, []); candidateBuckets.get(key).push(group); });
-  });
-  candidateBuckets.forEach((bucket) => {
-    const available = bucket.filter((group) => !consumed.has(group.id));
-    if (available.length < 2) return;
-    const base = available[0];
-    available.slice(1).forEach((candidate) => {
-      if (consumed.has(candidate.id) || base.records.some((record) => record.sourceId === candidate.records[0].sourceId)) return;
-      base.records.push(...candidate.records);
-      consumed.add(candidate.id);
-    });
-    if (base.records.length > 1) {
-      base.sources = [...new Set(base.records.map((record) => record.source))];
-      base.status = 'Posible';
-    }
-  });
-  state.groups = groups.filter((group) => !consumed.has(group.id)).map((group, index) => ({ ...group, number: index + 1 }));
+function valueScore(left, right, field, mode) {
+  const a = normalizedField(left, field), b = normalizedField(right, field);
+  if (!a || !b) return null;
+  if (mode === 'days') {
+    const dateA = new Date(left), dateB = new Date(right);
+    if (Number.isNaN(dateA.getTime()) || Number.isNaN(dateB.getTime())) return a === b ? 1 : 0;
+    const days = Math.abs(dateA - dateB) / 86400000;
+    return days <= 7 ? Math.max(.55, 1 - days / 15) : 0;
+  }
+  if (a === b) return 1;
+  if (mode !== 'flexible') return 0;
+  if (field === 'phone') return a.slice(-8) === b.slice(-8) ? 1 : 0;
+  return similarity(a, b);
 }
 
-function createGroup(key, records, compared) {
-  const canonical = Object.fromEntries(STANDARD_FIELDS.map((field) => [field.key, records.find((record) => String(record.values[field.key]).trim())?.values[field.key] || '']));
-  let status = records.length === 1 ? 'Exclusivo' : 'Exacto';
-  if (records.length > 1) {
-    const differences = compared.filter(({ field, mode }) => fieldHasDifference(records, field, mode));
-    if (differences.length >= Math.max(2, Math.ceil(compared.length / 2))) status = 'Conflicto';
-    else if (differences.length) status = 'Posible';
+function compareRecordPair(left, right, compared, preferred) {
+  let weighted = 0, weightTotal = 0, evidence = 0, strongMatches = 0;
+  const scores = {};
+  compared.forEach(({ field, mode }) => {
+    const score = valueScore(left.values[field], right.values[field], field, mode);
+    if (score === null) return;
+    const weight = FIELD_WEIGHTS[field] || .05;
+    weighted += score * weight;
+    weightTotal += weight;
+    evidence += 1;
+    scores[field] = score;
+    if (score >= .98 && (['id', 'email'].includes(field) || (field === 'phone' && isReliablePhone(left.values.phone) && isReliablePhone(right.values.phone)))) strongMatches += 1;
+  });
+  const score = weightTotal ? weighted / weightTotal : 0;
+  const preferredMatch = Boolean(preferred && scores[preferred] >= .98);
+  const exactIdentity = scores.id >= .98 || scores.email >= .98;
+  const phoneSupported = scores.phone >= .98 && evidence >= 2 && isReliablePhone(left.values.phone) && isReliablePhone(right.values.phone);
+  const related = preferredMatch || exactIdentity || phoneSupported || (evidence >= 2 && score >= .62);
+  const idConflict = left.values.id && right.values.id && normalizedField(left.values.id, 'id') !== normalizedField(right.values.id, 'id');
+  const emailConflict = left.values.email && right.values.email && normalize(left.values.email) !== normalize(right.values.email);
+  const conflict = related && (idConflict || emailConflict) && (strongMatches > 0 || score >= .55);
+  return { score, evidence, related, conflict };
+}
+
+function blockingKeys(record, compared) {
+  const enabled = new Set(compared.map(({ field }) => field));
+  const keys = [];
+  const id = normalizedField(record.values.id, 'id');
+  const email = normalize(record.values.email);
+  const phone = digits(record.values.phone);
+  const name = normalize(record.values.name).replace(/[^a-z0-9 ]/g, '');
+  const city = normalize(record.values.city);
+  const address = normalize(record.values.address).replace(/[^a-z0-9 ]/g, '');
+  if (enabled.has('id') && id.length >= 4) keys.push(`id:${id}`);
+  if (enabled.has('email') && email) {
+    keys.push(`email:${email}`);
+    const local = email.split('@')[0];
+    if (local.length >= 6) keys.push(`email-local:${local}`);
   }
-  return { id: crypto.randomUUID(), key, records, canonical, status, sources: [...new Set(records.map((record) => record.source))] };
+  if (enabled.has('phone') && isReliablePhone(phone)) keys.push(`phone:${phone.slice(-8)}`);
+  if (enabled.has('name') && name.length >= 4) {
+    const compact = name.replace(/\s/g, '');
+    keys.push(`name:${name}`);
+    if (compact.length >= 8) keys.push(`name-prefix:${compact.slice(0, 8)}`);
+    const tokens = name.split(' ').filter((token) => token.length >= 3);
+    if (tokens.length) keys.push(`name-token:${tokens[tokens.length - 1]}`);
+    if (city && enabled.has('city')) keys.push(`name-city:${compact.slice(0, 5)}:${city}`);
+  }
+  if (enabled.has('address') && address.length >= 8) keys.push(`address:${address.replace(/\s/g, '').slice(0, 14)}`);
+  return [...new Set(keys)];
+}
+
+function groupRecords() {
+  const compared = comparisonConfig();
+  const preferred = $('primaryKey').value;
+  const parent = state.records.map((_, index) => index);
+  const find = (index) => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
+  const unite = (left, right) => { const a = find(left), b = find(right); if (a !== b) parent[b] = a; };
+  const buckets = new Map();
+  state.records.forEach((record, index) => blockingKeys(record, compared).forEach((key) => {
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(index);
+  }));
+
+  const candidatePairs = new Set();
+  buckets.forEach((bucket) => {
+    if (bucket.length > 120) return;
+    for (let left = 0; left < bucket.length; left += 1) {
+      for (let right = left + 1; right < bucket.length; right += 1) {
+        const a = bucket[left], b = bucket[right];
+        if (state.records[a].sourceId === state.records[b].sourceId) continue;
+        candidatePairs.add(a < b ? `${a}:${b}` : `${b}:${a}`);
+      }
+    }
+  });
+
+  const linked = [];
+  candidatePairs.forEach((pair) => {
+    const [left, right] = pair.split(':').map(Number);
+    const assessment = compareRecordPair(state.records[left], state.records[right], compared, preferred);
+    if (!assessment.related) return;
+    unite(left, right);
+    linked.push({ left, right, ...assessment });
+  });
+
+  const components = new Map();
+  state.records.forEach((record, index) => {
+    const root = find(index);
+    if (!components.has(root)) components.set(root, []);
+    components.get(root).push(index);
+  });
+  const edgesByRoot = new Map();
+  linked.forEach((edge) => {
+    const root = find(edge.left);
+    if (!edgesByRoot.has(root)) edgesByRoot.set(root, []);
+    edgesByRoot.get(root).push(edge);
+  });
+  state.groups = [...components.entries()].map(([root, indices], groupIndex) => {
+    const records = indices.map((index) => state.records[index]);
+    const edges = edgesByRoot.get(root) || [];
+    const canonical = Object.fromEntries(STANDARD_FIELDS.map((field) => [field.key, records.find((record) => String(record.values[field.key]).trim())?.values[field.key] || '']));
+    let status = 'Diferente';
+    if (records.length > 1) {
+      if (edges.some((edge) => edge.conflict)) status = 'Conflicto';
+      else if (edges.length && edges.every((edge) => edge.score >= .9)) status = 'Exacto';
+      else status = 'Posible';
+    }
+    const averageScore = edges.length ? edges.reduce((sum, edge) => sum + edge.score, 0) / edges.length : 0;
+    return { id: crypto.randomUUID(), key: preferred ? canonical[preferred] : canonical.id || canonical.email || '', records, canonical, status, confidence: averageScore, sources: [...new Set(records.map((record) => record.source))], number: groupIndex + 1 };
+  });
 }
 
 function fieldHasDifference(records, field, mode) {
@@ -308,10 +453,8 @@ function fieldHasDifference(records, field, mode) {
 
 function runComparison() {
   if (state.datasets.length < 2) return;
-  const primaryField = $('primaryKey').value;
-  const missingPrimary = state.datasets.filter((dataset) => !dataset.map[primaryField]);
-  if (missingPrimary.length) {
-    $('runStatus').textContent = `Asigna “${fieldByKey(primaryField).label}” en: ${missingPrimary.map((dataset) => dataset.title).join(', ')}.`;
+  if (!comparisonConfig().length) {
+    $('runStatus').textContent = 'Selecciona al menos un campo para realizar el análisis.';
     return;
   }
   $('runStatus').textContent = 'Analizando y agrupando registros…';
@@ -327,9 +470,9 @@ function runComparison() {
     $('search').value = '';
     $('sourceFilter').value = '';
     document.querySelectorAll('.detail-tabs button').forEach((button) => button.classList.toggle('active', button.dataset.detailView === 'grouped'));
-    renderResults(); updateProgress(true);
-    $('runStatus').textContent = `Listo: ${formatNumber(state.records.length)} registros analizados.`;
-    document.querySelector('[data-scroll="resultados"]').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    renderResults();
+    $('runStatus').textContent = `Listo: ${formatNumber(state.records.length)} registros analizados sin exigir una clave común.`;
+    goToStep(4);
   });
 }
 
@@ -343,17 +486,18 @@ function filteredGroups() {
 }
 
 function renderResults() {
-  const counts = Object.fromEntries(['Exacto', 'Posible', 'Exclusivo', 'Conflicto'].map((status) => [status, state.groups.filter((group) => group.status === status).length]));
+  const counts = Object.fromEntries(['Exacto', 'Posible', 'Diferente', 'Conflicto'].map((status) => [status, state.groups.filter((group) => group.status === status).length]));
   $('countAll').textContent = formatNumber(state.groups.length);
   $('countExact').textContent = formatNumber(counts.Exacto);
   $('countPossible').textContent = formatNumber(counts.Posible);
-  $('countExclusive').textContent = formatNumber(counts.Exclusivo);
+  $('countExclusive').textContent = formatNumber(counts.Diferente);
   $('countConflict').textContent = formatNumber(counts.Conflicto);
   $('resultsSummary').textContent = state.groups.length ? `Se analizaron ${formatNumber(state.records.length)} registros · ${formatNumber(state.groups.length)} grupos resultantes` : 'Carga archivos para comenzar el análisis.';
   $('search').disabled = !state.groups.length;
   $('filterButton').disabled = !state.groups.length;
   $('exportCsv').disabled = !state.groups.length;
   $('exportXlsx').disabled = !state.groups.length;
+  $('exportSummary').textContent = state.groups.length ? `${formatNumber(state.records.length)} registros quedaron organizados en ${formatNumber(state.groups.length)} grupos. Puedes exportar el consolidado completo.` : 'Ejecuta una comparación para habilitar las descargas.';
   if (!state.groups.length) {
     $('filterPopover').hidden = true;
     $('filterButton').setAttribute('aria-expanded', 'false');
@@ -389,7 +533,7 @@ function renderDetail() {
   $('groupNumber').textContent = `Grupo #${group.number}`;
   if (state.detailView === 'history') {
     const fields = comparisonConfig().map(({ field }) => fieldByKey(field)?.label).filter(Boolean).join(', ') || 'Ninguno';
-    $('detailContent').innerHTML = `<div class="detail-summary"><div><h3>Resumen del análisis</h3><small>Trazabilidad de esta agrupación durante la sesión actual</small></div></div><article class="history-card"><div><span>Procesado</span><b>${state.lastRun ? state.lastRun.toLocaleString('es') : '—'}</b></div><div><span>Clave principal</span><b>${escapeHtml(fieldByKey($('primaryKey').value)?.label || '—')}</b></div><div><span>Campos comparados</span><b>${escapeHtml(fields)}</b></div><div><span>Fuentes vinculadas</span><b>${escapeHtml(group.sources.join(' · '))}</b></div><div><span>Resultado</span><b>${group.status}</b></div></article>`;
+    $('detailContent').innerHTML = `<div class="detail-summary"><div><h3>Resumen del análisis</h3><small>Trazabilidad de esta agrupación durante la sesión actual</small></div></div><article class="history-card"><div><span>Procesado</span><b>${state.lastRun ? state.lastRun.toLocaleString('es') : '—'}</b></div><div><span>Identificador preferido</span><b>${escapeHtml(fieldByKey($('primaryKey').value)?.label || 'Automático')}</b></div><div><span>Campos comparados</span><b>${escapeHtml(fields)}</b></div><div><span>Confianza media</span><b>${group.records.length > 1 ? `${Math.round(group.confidence * 100)} %` : 'Sin relación detectada'}</b></div><div><span>Fuentes vinculadas</span><b>${escapeHtml(group.sources.join(' · '))}</b></div><div><span>Resultado</span><b>${group.status}</b></div></article>`;
     return;
   }
   const title = state.detailView === 'individual' ? 'Registros individuales' : `${escapeHtml(group.canonical.id || 'Sin ID')} – ${escapeHtml(group.canonical.name || 'Sin nombre')}`;
@@ -447,11 +591,47 @@ function showPreview() {
   $('previewDialog').showModal();
 }
 
-function updateProgress(completed = false) {
-  let active = state.datasets.length ? 2 : 1;
-  if (state.datasets.length >= 2) active = 3;
-  if (state.groups.length || completed) active = 4;
-  document.querySelectorAll('.progress-step').forEach((button) => button.classList.toggle('active', Number(button.dataset.step) === active));
+function reachableStep() {
+  if (state.groups.length) return 5;
+  if (state.datasets.length >= 2) return 3;
+  if (state.datasets.length) return 2;
+  return 1;
+}
+
+function updateProgress() {
+  document.querySelectorAll('.progress-step').forEach((button) => {
+    const step = Number(button.dataset.step);
+    button.classList.toggle('active', step === state.currentStep);
+    button.classList.toggle('completed', step < state.currentStep && step <= reachableStep());
+  });
+  document.querySelectorAll('.flow-screen').forEach((screen) => screen.classList.toggle('active', Number(screen.dataset.flowScreen) === state.currentStep));
+  document.querySelectorAll('.nav-item').forEach((item) => {
+    const step = Number(item.dataset.goStep);
+    const active = (state.currentStep === 1 && step === 1) || (state.currentStep === 2 && step === 2) || (state.currentStep === 3 && step === 3) || (state.currentStep >= 4 && step === 4);
+    item.classList.toggle('active', active);
+    if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
+  });
+  $('flowBack').disabled = state.currentStep === 1;
+  $('flowNext').hidden = state.currentStep === 5;
+  const labels = { 1: 'Siguiente: revisar mapeo →', 2: 'Siguiente: configurar análisis →', 3: 'Analizar archivos →', 4: 'Siguiente: exportar →' };
+  $('flowNext').textContent = labels[state.currentStep] || 'Siguiente →';
+  $('flowNext').disabled = (state.currentStep === 1 && state.datasets.length < 2) || (state.currentStep === 3 && state.datasets.length < 2) || (state.currentStep === 4 && !state.groups.length);
+  const hints = {
+    1: state.datasets.length < 2 ? 'Carga al menos dos fuentes para comenzar.' : `${state.datasets.length} fuentes listas para revisar.`,
+    2: 'Los campos sin asignar se omiten; no bloquean el análisis.',
+    3: 'La comparación usa el registro completo y conserva lo no relacionado como diferente.',
+    4: 'Selecciona una fila para revisar la evidencia de cada grupo.',
+    5: 'Las descargas se generan localmente en tu navegador.'
+  };
+  $('flowHint').textContent = hints[state.currentStep];
+}
+
+function goToStep(requested) {
+  const allowed = reachableStep();
+  const target = Math.max(1, Math.min(Number(requested) || 1, allowed));
+  state.currentStep = target;
+  updateProgress();
+  document.querySelector('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 $('files').addEventListener('change', (event) => addFiles([...event.target.files]));
@@ -503,22 +683,18 @@ $('statusTabs').addEventListener('click', (event) => {
 $('previousPage').addEventListener('click', () => { if (state.page > 0) { state.page -= 1; renderResults(); } });
 $('nextPage').addEventListener('click', () => { state.page += 1; renderResults(); });
 $('exportCsv').addEventListener('click', () => {
-  document.querySelectorAll('.progress-step').forEach((button) => button.classList.toggle('active', button.dataset.step === '5'));
   download(new Blob([csvText(consolidatedRows())], { type: 'text/csv;charset=utf-8' }), 'CompClick_resultados.csv');
 });
 $('exportXlsx').addEventListener('click', () => {
-  document.querySelectorAll('.progress-step').forEach((button) => button.classList.toggle('active', button.dataset.step === '5'));
   exportExcel().catch((error) => alert(error.message));
 });
 
-document.querySelectorAll('[data-scroll]').forEach((button) => button.addEventListener('click', () => {
-  const target = $(button.dataset.scroll);
-  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  if (button.classList.contains('nav-item')) {
-    document.querySelectorAll('.nav-item').forEach((item) => { item.classList.toggle('active', item === button); item.removeAttribute('aria-current'); });
-    button.setAttribute('aria-current', 'page');
-  }
-}));
+document.querySelectorAll('[data-go-step]').forEach((button) => button.addEventListener('click', () => goToStep(button.dataset.goStep)));
+$('flowBack').addEventListener('click', () => goToStep(state.currentStep - 1));
+$('flowNext').addEventListener('click', () => {
+  if (state.currentStep === 3) runComparison();
+  else goToStep(state.currentStep + 1);
+});
 
 document.querySelectorAll('.detail-tabs button').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.detail-tabs button').forEach((item) => item.classList.toggle('active', item === button));
@@ -537,4 +713,4 @@ renderMapping();
 renderCompareControls();
 renderSourceFilter();
 renderResults();
-updateProgress();
+goToStep(1);
